@@ -91,3 +91,7 @@ def main(argv: Optional[List[str]] = None):
     # get the cli for the command and run it with the config we just loaded + the args
     cli = AVAILABLE_COMMANDS[command]
     return cli.run_from_args(args=args, config=config)
+
+
+if __name__ == "__main__":
+    main()

@@ -22,8 +22,7 @@ from tokenizers import Tokenizer as BaseTokenizer
 
 from ..core.errors import DolmaConfigError
 from ..core.loggers import get_logger
-from .data_types import InputSpec, TokenizerOutput
-
+from .data_types import KASInputSpec, KASTokenizerOutput
 with necessary("transformers", soft=True) as TRANSFORMERS_AVAILABLE:
     if TYPE_CHECKING or TRANSFORMERS_AVAILABLE:
         from transformers import AutoTokenizer  # pylint: disable=import-error
@@ -35,6 +34,13 @@ logger = get_logger(__name__)
 
 __all__ = ["Tokenizer"]
 
+BAD_SECTIONS = ("references", "external links", "sources", "further reading",
+                "see also", "citations", "note", "notes", "explanatory notes", "general and cited sources",
+                "primary sources", "secondary sources", "tertiary sources", "bibliography", "other",
+                "subnotes", "other notes", "general bibliography", "works cited", "notes and references"
+            )
+
+ARTICLE_NAMESPACE = "Article"
 
 class StrEnum(str, Enum):
     """
@@ -354,30 +360,39 @@ def make_tokenizer(
     )
     return tokenizer
 
+def clean_sections(sections):
+    return [s for s in sections if s["title"].lower() not in BAD_SECTIONS and len(s["content"].strip()) > 0]
+
+def section_entities(entities, section):
+    return [e for e in entities if e["entity_start"] >= section["begin"] and e["entity_end"] <= section["end"]]
 
 def tokenize_file(
     tokenizer_name_or_path: str,
     path: str,
     refresh_tokenizer_every: int = 0,
     **tokenizer_kwargs,
-) -> Generator[TokenizerOutput, None, None]:
+) -> Generator[KASTokenizerOutput, None, None]:
     """Tokenize a file of documents using the provided tokenizer; file is expected to be a gzipped JSON lines
     file, each containing a field named `text`.
     """
     tokenizer = make_tokenizer(tokenizer_name_or_path, **tokenizer_kwargs)
     dtype = deepcopy(tokenizer.dtype)
-    decoder = msgspec.json.Decoder(InputSpec)
+    decoder = msgspec.json.Decoder(KASInputSpec)
     with smart_open.open(path, mode="rt") as input_stream:
         for i, line in enumerate(input_stream, start=1):
             try:
                 row = decoder.decode(line)
+                if row.namespace != ARTICLE_NAMESPACE:
+                    continue
                 if text := row.text.strip():
                     # skip empty docs
-                    tokens = tokenizer.encode(text, add_special_tokens=True)
-                    if refresh_tokenizer_every:
-                        # extra copy to prevent memory leaks
-                        tokens = np.array(tokens, dtype=dtype)
-                    yield TokenizerOutput.from_tokens(id=row.id, src=path, loc=i, tokens=tokens)  # pyright: ignore
+                    for section in clean_sections(row.sections):
+                        tokens = tokenizer.encode(section["content"], add_special_tokens=True)
+                        entities = section_entities(row.entities, section)
+                        if refresh_tokenizer_every:
+                            # extra copy to prevent memory leaks
+                            tokens = np.array(tokens, dtype=dtype)
+                        yield KASTokenizerOutput.from_tokens(id=row.id, src=path, loc=i, title=section["title"], start_idx=section["begin"], end_idx=section["end"], tokens=tokens, entities=entities) # pyright: ignore
 
                 if refresh_tokenizer_every > 0 and i % refresh_tokenizer_every == 0:
                     # to prevent memory leaks, we refresh the tokenizer every so often

@@ -10,11 +10,21 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from msgspec import Struct
 from typing_extensions import TypeAlias
+from dataclasses import dataclass, field
 
 TaggerOutputValueType: TypeAlias = Tuple[int, int, float]
 TaggerOutputType: TypeAlias = List[TaggerOutputValueType]
 TaggerOutputDictType: TypeAlias = Dict[str, TaggerOutputType]
 
+class KASInputSpec(Struct):
+    id: int                               # Page ID
+    title: str                            # Page title
+    text: str = ""                        # Cleaned article text
+    sections: List[Dict] = field(default_factory=list)  # List of section dictionaries
+    entities: List[Dict] = field(default_factory=list)  # List of entity dictionaries (can be None)
+    namespace: str = ""                   # Namespace for non-article pages (disambiguation, etc.)
+    start_time: float = 0.0               # Timestamp when processing started
+    error: str = ""                       # Error message if an error occurred
 
 class InputSpec(Struct):
     id: str
