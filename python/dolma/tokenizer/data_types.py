@@ -1,8 +1,11 @@
+import json
+import csv
+from io import StringIO
 from typing import List, NamedTuple, Dict
 
 from ..core.data_types import KASInputSpec
 
-__all__ = ["KASInputSpec", "KASTokenizerOutput", "Metadata"]
+__all__ = ["KASInputSpec", "KASTokenizerOutput", "KASMetadata"]
 
 class KASTokenizerOutput(NamedTuple):
     id: int
@@ -36,6 +39,35 @@ class KASTokenizerOutput(NamedTuple):
             start_idx=output_spec.start_idx,
             end_idx=output_spec.end_idx,
         )
+
+class KASMetadata(NamedTuple):
+    id: str
+    src: str
+    loc: int
+    start: int
+    end: int
+    title: str
+    entities: List[Dict]
+    start_idx: int
+    end_idx: int
+
+    def to_csv(self) -> str:
+        output = StringIO()
+        writer = csv.writer(output)
+        entities_str = json.dumps(self.entities)
+        writer.writerow([self.id, self.src, self.loc, self.start, self.end, self.title, entities_str, self.start_idx, self.end_idx])
+        return output.getvalue().strip()
+
+class KASMemmapMetadata(NamedTuple):
+    start: int
+    end: int
+    id: str
+    src: str
+    loc: int
+    title: str
+    entities: List[Dict]
+    start_idx: int
+    end_idx: int
 
 class TokenizerOutput(NamedTuple):
     id: str

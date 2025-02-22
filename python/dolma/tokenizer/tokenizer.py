@@ -366,6 +366,48 @@ def clean_sections(sections):
 def section_entities(entities, section):
     return [e for e in entities if e["entity_start"] >= section["begin"] and e["entity_end"] <= section["end"]]
 
+def find_entity_token_indexes(section, entities, tokenizer):
+    """
+    Find the token indexes of each entity in the entities list.
+
+    :param text: The original text.
+    :param tokens: List of token IDs.
+    :param offsets: List of tuples containing the start and end positions of each token in the original text.
+    :param entities: List of entities with 'entity_start' and 'entity_end' positions.
+    :param tokenizer: Tokenizer instance used to encode the text.
+    :return: List of entities with added 'entity_tok_start' and 'entity_tok_end' positions.
+    """
+    text = section["content"]
+    encoding = tokenizer.base_tokenizer.encode(text, add_special_tokens=True)
+    section_start = section["begin"]
+    entities = section_entities(entities, section)
+    tokens = encoding.ids
+    offsets = encoding.offsets
+    entity_token_indexes = []
+    for entity in entities:
+        entity_start = entity["entity_start"] - section_start
+        entity_end = entity["entity_end"] - section_start
+        start_token_idx = next(
+            (i for i, (start, end) in enumerate(offsets) if start <= entity_start < end), None
+        )
+        end_token_idx = next(
+            (i for i, (start, end) in enumerate(offsets) if start < entity_end <= end), None
+        )
+        end_token_idx += 1 # Adjust end_token_idx to include the last token
+
+        # We update the entity with the string and token indexes relative to the section.
+        entity["entity_start"] = entity_start
+        entity["entity_end"] = entity_end
+        entity["entity_tok_start"] = start_token_idx
+        entity["entity_tok_end"] = end_token_idx
+        entity_token_indexes.append(entity)
+
+        assert text[entity_start:entity_end] == entity["entity_text"], f"Entity text mismatch: {text[entity_start:entity_end]} not equal to recorded text {entity['entity_text']}"
+        tokenized_entity_text = tokenizer.decode(tokens[start_token_idx:end_token_idx]).strip()
+        assert text[entity_start:entity_end] in tokenized_entity_text, f"Entity text mismatch: {text[entity_start:entity_end]} not in {tokenized_entity_text}"
+    
+    return entity_token_indexes, tokens
+
 def tokenize_file(
     tokenizer_name_or_path: str,
     path: str,
@@ -384,11 +426,10 @@ def tokenize_file(
                 row = decoder.decode(line)
                 if row.namespace != ARTICLE_NAMESPACE:
                     continue
-                if text := row.text.strip():
+                if row.text.strip():
                     # skip empty docs
                     for section in clean_sections(row.sections):
-                        tokens = tokenizer.encode(section["content"], add_special_tokens=True)
-                        entities = section_entities(row.entities, section)
+                        entities, tokens = find_entity_token_indexes(section, row.entities, tokenizer)
                         if refresh_tokenizer_every:
                             # extra copy to prevent memory leaks
                             tokens = np.array(tokens, dtype=dtype)

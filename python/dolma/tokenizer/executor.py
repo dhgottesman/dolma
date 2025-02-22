@@ -16,6 +16,7 @@ from ..core.parallel import BaseParallelProcessor, QueueType
 from ..core.paths import get_size, glob_path, join_path, mkdir_p
 from .data_types import TokenizerOutput  # pylint: disable=unused-import
 from .memmap_writer import MemmapWriter
+from .kas_memmap_writer import KASMemmapWriter
 from .tokenizer import Tokenizer, tokenize_file
 
 TokenizedSeqsQueueType: TypeAlias = "Queue[List[TokenizerOutput]]"
@@ -118,7 +119,7 @@ class MemMapParallelWriter(BaseParallelProcessor):
 
         with ExitStack() as stack:
             memwriter = stack.enter_context(
-                MemmapWriter(path=destination_path + f"-{mm_cnt:05d}", dtype=dtype, max_tokens=max_size)
+                KASMemmapWriter(path=destination_path + f"-{mm_cnt:05d}", dtype=dtype, max_tokens=max_size)
             )
             cls.increment_progressbar(queue, memmaps=1)
 
@@ -185,7 +186,7 @@ class MemMapParallelWriter(BaseParallelProcessor):
                     mm_cnt += 1
                     stack.pop_all().close()
                     memwriter = stack.enter_context(
-                        MemmapWriter(
+                        KASMemmapWriter(
                             path=destination_path + f"-{mm_cnt:05d}",
                             dtype=dtype,
                             max_tokens=max_size,
