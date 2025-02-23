@@ -27,6 +27,9 @@ with necessary("transformers", soft=True) as TRANSFORMERS_AVAILABLE:
     if TYPE_CHECKING or TRANSFORMERS_AVAILABLE:
         from transformers import AutoTokenizer  # pylint: disable=import-error
 
+import spacy
+nlp = spacy.load("en_core_web_sm")  # Load English model
+
 PathOrStr = Union[str, PathLike]
 
 logger = get_logger(__name__)
@@ -363,10 +366,37 @@ def make_tokenizer(
 def clean_sections(sections):
     return [s for s in sections if s["title"].lower() not in BAD_SECTIONS and len(s["content"].strip()) > 0]
 
-def section_entities(entities, section):
-    return [e for e in entities if e["entity_start"] >= section["begin"] and e["entity_end"] <= section["end"]]
+def chunk_entities(entities, start, end):
+    return [e for e in entities if e["entity_start"] >= start and e["entity_end"] <= end]
 
-def find_entity_token_indexes(section, entities, tokenizer):
+def find_entity_token_indexes_chunk(tokens, offsets, entities, start_text_offset, tokenizer):
+    entity_token_indexes = []
+    entity_token_indexes_chunk = []
+    tokenized_text = tokenizer.decode(tokens)
+    for entity in entities:
+        start_text = entity["entity_start"] - start_text_offset
+        end_text = entity["entity_end"] - start_text_offset
+        start_token = next(
+            (i for i, (start, end) in enumerate(offsets) if start <= start_text < end), None
+        )
+        end_token = next(
+            (i for i, (start, end) in enumerate(offsets) if start < end_text <= end), None
+        )
+        end_token += 1  # Adjust end_token_idx to include the last token
+
+        # We update the entity with the string and token indexes relative to the section.
+        entity["entity_text_start"] = start_text
+        entity["entity_text_end"] = end_text
+        entity["entity_token_start"] = start_token
+        entity["entity_token_end"] = end_token
+        entity_token_indexes_chunk.append(entity)
+
+        assert tokenized_text[start_text:end_text] == entity["entity_text"], f"Entity text mismatch: {tokenized_text[start_text:end_text]} not equal to recorded text {entity['entity_text']}"
+        tokenized_entity_text = tokenizer.decode(tokens[start_token:end_token]).strip()
+        assert tokenized_text[start_text:end_text] in tokenized_entity_text, f"Entity text mismatch: {tokenized_text[start_text:end_text]} not in {tokenized_entity_text}"
+    return entity_token_indexes_chunk, entity_token_indexes
+
+def find_entity_token_indexes(section, entities, tokenizer, chunk_size=2048):
     """
     Find the token indexes of each entity in the entities list.
 
@@ -380,38 +410,86 @@ def find_entity_token_indexes(section, entities, tokenizer):
     text = section["content"]
     encoding = tokenizer.base_tokenizer.encode(text, add_special_tokens=True)
     section_start = section["begin"]
-    entities = section_entities(entities, section)
     tokens = encoding.ids
     offsets = encoding.offsets
     entity_token_indexes = []
-    for entity in entities:
-        entity_start = entity["entity_start"] - section_start
-        entity_end = entity["entity_end"] - section_start
-        start_token_idx = next(
-            (i for i, (start, end) in enumerate(offsets) if start <= entity_start < end), None
-        )
-        end_token_idx = next(
-            (i for i, (start, end) in enumerate(offsets) if start < entity_end <= end), None
-        )
-        end_token_idx += 1 # Adjust end_token_idx to include the last token
 
-        # We update the entity with the string and token indexes relative to the section.
-        entity["entity_start"] = entity_start
-        entity["entity_end"] = entity_end
-        entity["entity_tok_start"] = start_token_idx
-        entity["entity_tok_end"] = end_token_idx
-        entity_token_indexes.append(entity)
+    # If output is too large, split it into chunks.
+    # We make sure that chunks are split at the end of sentences.
+    all_chunk_tokens = []
+    if len(tokens) > chunk_size:
+        doc = nlp(text)
+        sentence_text_indexes = [(sent.start_char, sent.end_char) for sent in doc.sents]
 
-        assert text[entity_start:entity_end] == entity["entity_text"], f"Entity text mismatch: {text[entity_start:entity_end]} not equal to recorded text {entity['entity_text']}"
-        tokenized_entity_text = tokenizer.decode(tokens[start_token_idx:end_token_idx]).strip()
-        assert text[entity_start:entity_end] in tokenized_entity_text, f"Entity text mismatch: {text[entity_start:entity_end]} not in {tokenized_entity_text}"
-    
-    return entity_token_indexes, tokens
+        sentence_token_indexes = []
+        for start, end in sentence_text_indexes:
+            found = False
+            token_indices = []
+            for i, (tok_start, tok_end) in enumerate(offsets):
+                if tok_start <= start and tok_end >= start:
+                    found = True
+                
+                if not found:
+                    continue
+
+                token_indices.append(i)
+                if tok_end >= end:
+                   break
+
+            sentence_token_indexes.append((token_indices[0], token_indices[-1] + 1))  # +1 for non-inclusive bounds
+        
+        # Split the tokens into chunks, checking that the chunks are split at the end of sentences.
+        chunk_text_start = -1
+        chunk_text_end = -1
+        chunk_token_start = -1
+        for (start_text, end_text), (start_token, end_token) in zip(sentence_text_indexes, sentence_token_indexes):
+            if chunk_text_start == -1:
+                chunk_text_start = start_text
+                chunk_text_end = end_text
+                chunk_token_start = start_token
+            if end_token - chunk_token_start > chunk_size:
+                # If the chunk is too large, process the current chunk and start a new one.
+                # Find the index of the first chunk token in the text.
+                chunk_encoding = tokenizer.base_tokenizer.encode(text[chunk_text_start:chunk_text_end], add_special_tokens=True)
+                chunk_tokens = chunk_encoding.ids
+                chunk_offsets = chunk_encoding.offsets
+                entities_chunk = chunk_entities(entities, section_start + chunk_text_start, section_start + chunk_text_end)
+                entity_token_indexes_chunk, _ = find_entity_token_indexes_chunk(
+                    chunk_tokens, chunk_offsets, entities_chunk, section_start + chunk_text_start, tokenizer
+                )
+                entity_token_indexes.append(entity_token_indexes_chunk)
+                all_chunk_tokens.append(chunk_tokens)
+                chunk_text_start = start_text
+                chunk_token_start = start_token
+
+            chunk_text_end = end_text
+        
+        # Process the last chunk.
+        chunk_encoding = tokenizer.base_tokenizer.encode(text[chunk_text_start:chunk_text_end], add_special_tokens=True)
+        chunk_tokens = chunk_encoding.ids
+        chunk_offsets = chunk_encoding.offsets
+        if len(chunk_tokens) > 0:
+            entities_chunk = chunk_entities(entities, section_start + chunk_text_start, section_start + chunk_text_end)
+            entity_token_indexes_chunk, _ = find_entity_token_indexes_chunk(
+                chunk_tokens, chunk_offsets, entities_chunk, section_start + chunk_text_start, tokenizer
+            )
+            entity_token_indexes.append(entity_token_indexes_chunk)
+            all_chunk_tokens.append(chunk_tokens)
+   
+    else:
+        # Process the entire section at once.
+        entities_chunk = chunk_entities(entities, section_start, section_start + len(text))
+        entity_token_indexes, _ = find_entity_token_indexes_chunk(tokens, offsets, entities_chunk, section_start, tokenizer)  # pyright: ignore
+        entity_token_indexes = [entity_token_indexes]
+        chunk_tokens = [tokens]
+
+    return entity_token_indexes, chunk_tokens
 
 def tokenize_file(
     tokenizer_name_or_path: str,
     path: str,
     refresh_tokenizer_every: int = 0,
+    chunk_size: int = 2048,
     **tokenizer_kwargs,
 ) -> Generator[KASTokenizerOutput, None, None]:
     """Tokenize a file of documents using the provided tokenizer; file is expected to be a gzipped JSON lines
@@ -420,8 +498,9 @@ def tokenize_file(
     tokenizer = make_tokenizer(tokenizer_name_or_path, **tokenizer_kwargs)
     dtype = deepcopy(tokenizer.dtype)
     decoder = msgspec.json.Decoder(KASInputSpec)
+    loc = 0
     with smart_open.open(path, mode="rt") as input_stream:
-        for i, line in enumerate(input_stream, start=1):
+        for _, line in enumerate(input_stream, start=1):
             try:
                 row = decoder.decode(line)
                 if row.namespace != ARTICLE_NAMESPACE:
@@ -429,17 +508,19 @@ def tokenize_file(
                 if row.text.strip():
                     # skip empty docs
                     for section in clean_sections(row.sections):
-                        entities, tokens = find_entity_token_indexes(section, row.entities, tokenizer)
-                        if refresh_tokenizer_every:
-                            # extra copy to prevent memory leaks
-                            tokens = np.array(tokens, dtype=dtype)
-                        yield KASTokenizerOutput.from_tokens(id=row.id, src=path, loc=i, title=section["title"], start_idx=section["begin"], end_idx=section["end"], tokens=tokens, entities=entities) # pyright: ignore
+                        entities, chunks = find_entity_token_indexes(section, row.entities, tokenizer)
+                        for chunk in chunks:
+                            if refresh_tokenizer_every:
+                                # extra copy to prevent memory leaks
+                                tokens = np.array(chunk, dtype=dtype)
+                            yield KASTokenizerOutput.from_tokens(id=row.id, src=path, loc=loc, title=section["title"], tokens=tokens, entities=entities) # pyright: ignore
+                            loc += 1
 
-                if refresh_tokenizer_every > 0 and i % refresh_tokenizer_every == 0:
+                if refresh_tokenizer_every > 0 and loc % refresh_tokenizer_every == 0:
                     # to prevent memory leaks, we refresh the tokenizer every so often
                     del tokenizer
                     gc.collect()
                     tokenizer = make_tokenizer(tokenizer_name_or_path, **tokenizer_kwargs)
 
             except Exception as ex:
-                logger.error("Error processing %s:%d", path, i, exc_info=ex)
+                logger.error("Error processing %s:%d", path, loc, exc_info=ex)
