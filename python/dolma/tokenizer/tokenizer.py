@@ -11,7 +11,7 @@ from itertools import chain
 from os import PathLike
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Generator, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Generator, List, Optional, Tuple, Union, Dict
 
 import msgspec
 import numpy as np
@@ -363,127 +363,137 @@ def make_tokenizer(
     )
     return tokenizer
 
-def clean_sections(sections):
-    return [s for s in sections if s["title"].lower() not in BAD_SECTIONS and len(s["content"].strip()) > 0]
+def clean_sections(sections: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Removes sections with empty content or blacklisted titles."""
+    return [s for s in sections if s["title"].lower() not in BAD_SECTIONS and s["content"].strip()]
 
-def chunk_entities(entities, start, end):
-    return [e for e in entities if e["entity_start"] >= start and e["entity_end"] <= end]
+def chunk_entities(entities: List[Dict[str, int]], start: int, end: int) -> List[Dict[str, int]]:
+    """Filters entities that fall within the given start and end range."""
+    return [e for e in entities if start <= e["entity_start"] <= e["entity_end"] <= end]
 
-def find_entity_token_indexes_chunk(tokens, offsets, entities, start_text_offset, tokenizer):
+def find_sentence_token_indexes(text_indexes, offsets):
+    indexes = []
+    for start, end in text_indexes:
+        found = False
+        token_indices = []
+        for i, (tok_start, tok_end) in enumerate(offsets):
+            if tok_start <= start and tok_end >= start:
+                found = True
+            
+            if not found:
+                continue
+
+            token_indices.append(i)
+            if tok_end >= end:
+                break
+
+        indexes.append((token_indices[0], token_indices[-1] + 1))  # +1 for non-inclusive bounds
+    return indexes
+
+def find_entity_token_indexes_chunk(
+    tokens: List[int],
+    offsets: List[Tuple[int, int]],
+    entities: List[Dict[str, int]],
+    start_text_offset: int,
+    tokenizer
+) -> Tuple[List[Dict[str, int]], List[int]]:
+    """Finds token indexes for entities in a chunk of text."""
+    entities = deepcopy(entities)
     entity_token_indexes = []
-    entity_token_indexes_chunk = []
     tokenized_text = tokenizer.decode(tokens)
+
     for entity in entities:
         start_text = entity["entity_start"] - start_text_offset
         end_text = entity["entity_end"] - start_text_offset
+        
         start_token = next(
-            (i for i, (start, end) in enumerate(offsets) if start <= start_text < end), None
+            (i for i, (s, e) in enumerate(offsets) if s <= start_text < e), None
         )
         end_token = next(
-            (i for i, (start, end) in enumerate(offsets) if start < end_text <= end), None
+            (i for i, (s, e) in enumerate(offsets) if s < end_text <= e), None
         )
-        end_token += 1  # Adjust end_token_idx to include the last token
+        
+        if start_token is None or end_token is None:
+            continue
+        
+        entity.update({
+            "entity_text_start": start_text,
+            "entity_text_end": end_text,
+            "entity_token_start": start_token,
+            "entity_token_end": end_token + 1,  # Non-inclusive end
+        })
+        del entity["entity_start"], entity["entity_end"]
+        
+        extracted_text = tokenized_text[start_text:end_text]
+        decoded_tokens_text = tokenizer.decode(tokens[start_token:end_token + 1]).strip()
+        
+        assert extracted_text == entity["entity_text"], f"Entity text mismatch: {extracted_text} != {entity['entity_text']}"
+        if "�" not in decoded_tokens_text:
+            assert extracted_text in decoded_tokens_text, f"Entity text mismatch: {extracted_text} not in {decoded_tokens_text}"
+        
+        entity_token_indexes.append(entity)
+    
+    return entity_token_indexes
 
-        # We update the entity with the string and token indexes relative to the section.
-        entity["entity_text_start"] = start_text
-        entity["entity_text_end"] = end_text
-        entity["entity_token_start"] = start_token
-        entity["entity_token_end"] = end_token
-        entity_token_indexes_chunk.append(entity)
-
-        assert tokenized_text[start_text:end_text] == entity["entity_text"], f"Entity text mismatch: {tokenized_text[start_text:end_text]} not equal to recorded text {entity['entity_text']}"
-        tokenized_entity_text = tokenizer.decode(tokens[start_token:end_token]).strip()
-        assert tokenized_text[start_text:end_text] in tokenized_entity_text, f"Entity text mismatch: {tokenized_text[start_text:end_text]} not in {tokenized_entity_text}"
-    return entity_token_indexes_chunk, entity_token_indexes
-
-def find_entity_token_indexes(section, entities, tokenizer, chunk_size=2048):
+def find_entity_token_indexes(
+    section: Dict[str, str], 
+    entities: List[Dict[str, int]], 
+    tokenizer, 
+    chunk_size: int = 2048
+) -> Tuple[List[List[Dict[str, int]]], List[List[int]]]:
     """
-    Find the token indexes of each entity in the entities list.
-
-    :param text: The original text.
-    :param tokens: List of token IDs.
-    :param offsets: List of tuples containing the start and end positions of each token in the original text.
-    :param entities: List of entities with 'entity_start' and 'entity_end' positions.
-    :param tokenizer: Tokenizer instance used to encode the text.
-    :return: List of entities with added 'entity_tok_start' and 'entity_tok_end' positions.
+    Finds token indexes for entities in a section, handling large texts by chunking.
     """
     text = section["content"]
-    encoding = tokenizer.base_tokenizer.encode(text, add_special_tokens=True)
     section_start = section["begin"]
-    tokens = encoding.ids
-    offsets = encoding.offsets
-    entity_token_indexes = []
-
-    # If output is too large, split it into chunks.
-    # We make sure that chunks are split at the end of sentences.
-    all_chunk_tokens = []
-    if len(tokens) > chunk_size:
-        doc = nlp(text)
-        sentence_text_indexes = [(sent.start_char, sent.end_char) for sent in doc.sents]
-
-        sentence_token_indexes = []
-        for start, end in sentence_text_indexes:
-            found = False
-            token_indices = []
-            for i, (tok_start, tok_end) in enumerate(offsets):
-                if tok_start <= start and tok_end >= start:
-                    found = True
-                
-                if not found:
-                    continue
-
-                token_indices.append(i)
-                if tok_end >= end:
-                   break
-
-            sentence_token_indexes.append((token_indices[0], token_indices[-1] + 1))  # +1 for non-inclusive bounds
-        
-        # Split the tokens into chunks, checking that the chunks are split at the end of sentences.
-        chunk_text_start = -1
-        chunk_text_end = -1
-        chunk_token_start = -1
-        for (start_text, end_text), (start_token, end_token) in zip(sentence_text_indexes, sentence_token_indexes):
-            if chunk_text_start == -1:
-                chunk_text_start = start_text
-                chunk_text_end = end_text
-                chunk_token_start = start_token
-            if end_token - chunk_token_start > chunk_size:
-                # If the chunk is too large, process the current chunk and start a new one.
-                # Find the index of the first chunk token in the text.
-                chunk_encoding = tokenizer.base_tokenizer.encode(text[chunk_text_start:chunk_text_end], add_special_tokens=True)
-                chunk_tokens = chunk_encoding.ids
-                chunk_offsets = chunk_encoding.offsets
-                entities_chunk = chunk_entities(entities, section_start + chunk_text_start, section_start + chunk_text_end)
-                entity_token_indexes_chunk, _ = find_entity_token_indexes_chunk(
-                    chunk_tokens, chunk_offsets, entities_chunk, section_start + chunk_text_start, tokenizer
-                )
-                entity_token_indexes.append(entity_token_indexes_chunk)
-                all_chunk_tokens.append(chunk_tokens)
-                chunk_text_start = start_text
-                chunk_token_start = start_token
-
-            chunk_text_end = end_text
-        
-        # Process the last chunk.
-        chunk_encoding = tokenizer.base_tokenizer.encode(text[chunk_text_start:chunk_text_end], add_special_tokens=True)
-        chunk_tokens = chunk_encoding.ids
-        chunk_offsets = chunk_encoding.offsets
-        if len(chunk_tokens) > 0:
-            entities_chunk = chunk_entities(entities, section_start + chunk_text_start, section_start + chunk_text_end)
-            entity_token_indexes_chunk, _ = find_entity_token_indexes_chunk(
-                chunk_tokens, chunk_offsets, entities_chunk, section_start + chunk_text_start, tokenizer
-            )
-            entity_token_indexes.append(entity_token_indexes_chunk)
-            all_chunk_tokens.append(chunk_tokens)
-   
-    else:
-        # Process the entire section at once.
+    encoding = tokenizer.base_tokenizer.encode(text, add_special_tokens=True)
+    tokens, offsets = encoding.ids, encoding.offsets
+    
+    if len(tokens) <= chunk_size:
         entities_chunk = chunk_entities(entities, section_start, section_start + len(text))
-        entity_token_indexes, _ = find_entity_token_indexes_chunk(tokens, offsets, entities_chunk, section_start, tokenizer)  # pyright: ignore
-        entity_token_indexes = [entity_token_indexes]
-        chunk_tokens = [tokens]
+        entity_token_indexes = find_entity_token_indexes_chunk(tokens, offsets, entities_chunk, section_start, tokenizer)
+        return [entity_token_indexes], [tokens]
 
-    return entity_token_indexes, chunk_tokens
+    # Sentence-based chunking
+    doc = nlp(text)
+    sentence_text_indexes = [(sent.start_char, sent.end_char) for sent in doc.sents]
+    # Because the tokenizer removes beginning whitespace, we need to update the offset of the first sentence.
+    if offsets[0][0] > 0:
+        sentence_text_indexes[0] = (offsets[0][0], sentence_text_indexes[0][1])
+
+    sentence_token_indexes = find_sentence_token_indexes(sentence_text_indexes, offsets)
+
+    chunk_text_indexes = []
+    chunk_start, chunk_end = -1, -1
+
+    # Find the token bounds of each chunk.
+    for (start_text, end_text), (start_token, end_token) in zip(sentence_text_indexes, sentence_token_indexes):
+        if chunk_start == -1:
+            chunk_start, chunk_end = start_text, end_text
+            chunk_token_start = start_token
+        
+        if end_token - chunk_token_start > chunk_size:
+            chunk_text_indexes.append((chunk_start, chunk_end))
+            chunk_start = start_text
+            chunk_token_start = start_token
+        chunk_end = end_text
+    
+    chunk_text_indexes.append((chunk_start, chunk_end))
+
+    entity_token_indexes, all_chunk_tokens = [], []
+
+    for chunk_start, chunk_end in chunk_text_indexes:
+        # We must recompute the chunk offsets because the tokenizer removes repeated whitespace.
+        chunk_encoding = tokenizer.base_tokenizer.encode(text[chunk_start:chunk_end], add_special_tokens=True)
+        chunk_tokens, chunk_offsets = chunk_encoding.ids, chunk_encoding.offsets
+        
+        entities_chunk = chunk_entities(entities, section_start + chunk_start, section_start + chunk_end)
+        entity_token_indexes_chunk = find_entity_token_indexes_chunk(chunk_tokens, chunk_offsets, entities_chunk, section_start + chunk_start, tokenizer)
+        
+        entity_token_indexes.append(entity_token_indexes_chunk)
+        all_chunk_tokens.append(chunk_tokens)
+    
+    return entity_token_indexes, all_chunk_tokens
 
 def tokenize_file(
     tokenizer_name_or_path: str,
@@ -524,3 +534,4 @@ def tokenize_file(
 
             except Exception as ex:
                 logger.error("Error processing %s:%d", path, loc, exc_info=ex)
+ 

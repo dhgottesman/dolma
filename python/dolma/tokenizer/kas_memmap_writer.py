@@ -49,8 +49,6 @@ class KASMemmapWriter(MemmapWriter):
             end=self._written_tokens + output.end,
             title=output.title,
             entities=output.entities,
-            start_idx=output.start_idx,
-            end_idx=output.end_idx,
         )
         self._memmap_file[self._written_tokens : self._written_tokens + output.end] = output.tokens
         self._written_tokens += output.end

@@ -14,14 +14,12 @@ class KASTokenizerOutput(NamedTuple):
     title: str
     tokens: List[int]
     entities: List[Dict]
-    start_idx: int
-    end_idx: int
     start: int
     end: int
 
     @classmethod
-    def from_tokens(cls, id: str, src: str, loc: int, tokens: List[int], title: str, entities: List[Dict], start_idx: int, end_idx: int) -> "KASTokenizerOutput":
-        return cls(id=id, src=src, loc=loc, tokens=tokens, start=0, end=len(tokens), title=title, entities=entities, start_idx=start_idx, end_idx=end_idx)
+    def from_tokens(cls, id: str, src: str, loc: int, tokens: List[int], title: str, entities: List[Dict]) -> "KASTokenizerOutput":
+        return cls(id=id, src=src, loc=loc, tokens=tokens, start=0, end=len(tokens), title=title, entities=entities)
 
     @classmethod
     def from_output_spec(cls, output_spec: "KASTokenizerOutput", start: int = -1, end: int = -1) -> "KASTokenizerOutput":
@@ -36,8 +34,6 @@ class KASTokenizerOutput(NamedTuple):
             end=end,
             title=output_spec.title,
             entities=output_spec.entities,
-            start_idx=output_spec.start_idx,
-            end_idx=output_spec.end_idx,
         )
 
 class KASMetadata(NamedTuple):
@@ -48,14 +44,12 @@ class KASMetadata(NamedTuple):
     end: int
     title: str
     entities: List[Dict]
-    start_idx: int
-    end_idx: int
 
     def to_csv(self) -> str:
         output = StringIO()
         writer = csv.writer(output)
         entities_str = json.dumps(self.entities)
-        writer.writerow([self.id, self.src, self.loc, self.start, self.end, self.title, entities_str, self.start_idx, self.end_idx])
+        writer.writerow([self.id, self.src, self.loc, self.start, self.end, self.title, entities_str])
         return output.getvalue().strip()
 
 class KASMemmapMetadata(NamedTuple):
@@ -66,8 +60,6 @@ class KASMemmapMetadata(NamedTuple):
     loc: int
     title: str
     entities: List[Dict]
-    start_idx: int
-    end_idx: int
 
 class TokenizerOutput(NamedTuple):
     id: str
