@@ -50,6 +50,14 @@ class TokenizerConfig:
         default=False,
         help="Whether to encode special tokens in the tokenized output, e.g. splitting '<s>' into '<', 's', '>'.",
     )
+    mode: str = field(
+        default="",
+        help="Mode for chunking in the KASTokenizer.",
+    )
+    # add_eos_token: bool = field(
+    #     default=False,
+    #     help="Add eos token at the end of a tokenized sequence."
+    # )
 
     def __post__init__(self):
         logger = get_logger(__file__)
@@ -157,7 +165,6 @@ class TokenizationConfig:
         help="If true, only print the configuration and exit without running the taggers.",
     )
 
-
 class TokenizerCli(BaseCli):
     CONFIG = TokenizationConfig
     DESCRIPTION = "Tokenize documents using the provided tokenizer."
@@ -208,8 +215,8 @@ class TokenizerCli(BaseCli):
                 local_shuffle=parsed_config.batch_size,
                 ring_size=parsed_config.ring_size,
                 tokenizer_name_or_path=parsed_config.tokenizer.name_or_path,
-                bos_token_id=parsed_config.tokenizer.bos_token_id or 50279,
-                eos_token_id=parsed_config.tokenizer.eos_token_id or 50279,
+                bos_token_id=parsed_config.tokenizer.bos_token_id,
+                eos_token_id=parsed_config.tokenizer.eos_token_id,
                 pad_token_id=parsed_config.tokenizer.pad_token_id,
                 segment_before_tokenization=parsed_config.tokenizer.segment_before_tokenization,
                 encode_special_tokens=parsed_config.tokenizer.encode_special_tokens,
@@ -221,4 +228,5 @@ class TokenizerCli(BaseCli):
                 sample_ring_prop=parsed_config.sample_ring_prop,
                 use_fast_tokenizer=parsed_config.tokenizer.fast,
                 refresh_tokenizer=parsed_config.tokenizer.refresh,
+                mode=parsed_config.tokenizer.mode
             )

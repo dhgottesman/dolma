@@ -1,0 +1,17 @@
+# List of document paths to process
+documents: 
+  - /home/morg/dataset/parsed_enwiki_simple/*.gz
+
+# Destination path to save the outputs
+destination: wikipedia_vsl
+
+dtype: uint32
+
+# Tokenizer configuration
+tokenizer:
+  name_or_path: allenai/dolma2-tokenizer
+  mode: vsl
+  eos_token_id: 100257
+  pad_token_id: 100277
+
+processes: 68

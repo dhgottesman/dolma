@@ -6,7 +6,7 @@ import tempfile
 from contextlib import ExitStack
 from math import ceil, log10
 from queue import Queue  # pylint: disable=unused-import
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Union
 
 import numpy as np
 from typing_extensions import TypeAlias
@@ -14,10 +14,12 @@ from typing_extensions import TypeAlias
 from ..core.loggers import get_logger
 from ..core.parallel import BaseParallelProcessor, QueueType
 from ..core.paths import get_size, glob_path, join_path, mkdir_p
-from .data_types import TokenizerOutput  # pylint: disable=unused-import
+from .data_types import TokenizerOutput, KASTokenizerOutput  # pylint: disable=unused-import
 from .memmap_writer import MemmapWriter
 from .kas_memmap_writer import KASMemmapWriter
-from .tokenizer import Tokenizer, tokenize_file
+from .tokenizer import Tokenizer
+from .tokenizer import tokenize_file as original_tokenize_file
+from .kas_tokenizer import tokenize_file as kas_tokenize_file
 
 TokenizedSeqsQueueType: TypeAlias = "Queue[List[TokenizerOutput]]"
 PathsQueueType: TypeAlias = "Queue[str]"
@@ -26,6 +28,39 @@ PathsQueueType: TypeAlias = "Queue[str]"
 def sizes_to_probs(sizes: List[int]) -> np.ndarray:
     return np.array(sizes) / sum(sizes)
 
+
+def tokenize_file(
+    tokenizer_name_or_path: str,
+    path: str,
+    refresh_tokenizer_every: int = 0,
+    **tokenizer_kwargs,
+) -> Generator[Union[TokenizerOutput, KASTokenizerOutput], None, None]:
+    """
+    Tokenize a file of documents using the appropriate tokenizer based on the path.
+    
+    Args:
+        tokenizer_name_or_path (str): The name or path of the tokenizer to use.
+        path (str): The path to the file to tokenize.
+        refresh_tokenizer_every (int, optional): The number of lines to process before refreshing the tokenizer.
+        **tokenizer_kwargs: Additional keyword arguments for the tokenizer.
+    
+    Yields:
+        TokenizerOutput: The tokenized output.
+    """
+    if "enwiki" in path:
+        yield from kas_tokenize_file(
+            tokenizer_name_or_path=tokenizer_name_or_path,
+            path=path,
+            refresh_tokenizer_every=refresh_tokenizer_every,
+            **tokenizer_kwargs,
+        )
+    else:
+        yield from original_tokenize_file(
+            tokenizer_name_or_path=tokenizer_name_or_path,
+            path=path,
+            refresh_tokenizer_every=refresh_tokenizer_every,
+            **tokenizer_kwargs,
+        )
 
 class MemMapParallelWriter(BaseParallelProcessor):
     @classmethod
@@ -66,6 +101,8 @@ class MemMapParallelWriter(BaseParallelProcessor):
             raise RuntimeError("tokenizer_name_or_path not provided")
 
         tokenizer_kwargs = {}
+        if mode := kwargs.pop("mode", None):
+            tokenizer_kwargs["mode"] = mode
         tokenizer_kwargs["bos_token_id"] = kwargs.pop("bos_token_id", None)
         tokenizer_kwargs["eos_token_id"] = kwargs.pop("eos_token_id", None)
         if tokenizer_kwargs["bos_token_id"] is None and tokenizer_kwargs["eos_token_id"] is None:
@@ -306,6 +343,7 @@ def tokenize_in_parallel(
     sample_ring_prop: bool = False,
     refresh_tokenizer: int = 0,
     use_fast_tokenizer: bool = True,
+    mode: Optional[str] = None,
 ):
     """
     Tokenizes the input sources in parallel using multiple writers and readers.
@@ -335,6 +373,7 @@ def tokenize_in_parallel(
         refresh_tokenizer (int, optional): Number of batches after which to refresh the tokenizer.
             Defaults to 0, which means the tokenizer will not be refreshed.
         use_fast_tokenizer (bool, optional): Whether to use the fast tokenizer. Defaults to True.
+        mode (str, optional): Mode to use for tokenization. Defaults to None.
     """
     # variables to avoid issues with parallelism
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -381,4 +420,5 @@ def tokenize_in_parallel(
         sample_ring_prop=sample_ring_prop,
         use_fast_tokenizer=use_fast_tokenizer,
         refresh_tokenizer=refresh_tokenizer,
+        mode=mode
     )

@@ -3,16 +3,16 @@ import csv
 from io import StringIO
 from typing import List, NamedTuple, Dict
 
-from ..core.data_types import KASInputSpec
+from ..core.data_types import KASInputSpec, InputSpec
 
-__all__ = ["KASInputSpec", "KASTokenizerOutput", "KASMetadata"]
+__all__ = ["KASInputSpec", "KASTokenizerOutput", "KASMetadata", "InputSpec", "TokenizerOutput", "Metadata"]
 
 class KASTokenizerOutput(NamedTuple):
     id: int
     src: str
     loc: int
-    title: str
     tokens: List[int]
+    title: str
     entities: List[Dict]
     start: int
     end: int
