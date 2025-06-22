@@ -1,7 +1,7 @@
 import json
 import csv
 from io import StringIO
-from typing import List, NamedTuple, Dict
+from typing import List, NamedTuple, Dict, Tuple
 
 from ..core.data_types import KASInputSpec, InputSpec
 
@@ -16,10 +16,11 @@ class KASTokenizerOutput(NamedTuple):
     entities: List[Dict]
     start: int
     end: int
+    offsets: List[Tuple[int, int]]
 
     @classmethod
-    def from_tokens(cls, id: str, src: str, loc: int, tokens: List[int], title: str, entities: List[Dict]) -> "KASTokenizerOutput":
-        return cls(id=id, src=src, loc=loc, tokens=tokens, start=0, end=len(tokens), title=title, entities=entities)
+    def from_tokens(cls, id: str, src: str, loc: int, tokens: List[int], title: str, entities: List[Dict], offsets: List[Tuple[int, int]]) -> "KASTokenizerOutput":
+        return cls(id=id, src=src, loc=loc, tokens=tokens, start=0, end=len(tokens), title=title, entities=entities, offsets=offsets)
 
     @classmethod
     def from_output_spec(cls, output_spec: "KASTokenizerOutput", start: int = -1, end: int = -1) -> "KASTokenizerOutput":
@@ -34,6 +35,7 @@ class KASTokenizerOutput(NamedTuple):
             end=end,
             title=output_spec.title,
             entities=output_spec.entities,
+            offsets=output_spec.offsets,
         )
 
 class KASMetadata(NamedTuple):
@@ -44,12 +46,14 @@ class KASMetadata(NamedTuple):
     end: int
     title: str
     entities: List[Dict]
+    offsets: List[Tuple[int, int]]
 
     def to_csv(self) -> str:
         output = StringIO()
         writer = csv.writer(output)
         entities_str = json.dumps(self.entities)
-        writer.writerow([self.id, self.src, self.loc, self.start, self.end, self.title, entities_str])
+        offsets_str = json.dumps(self.offsets)
+        writer.writerow([self.id, self.src, self.loc, self.start, self.end, self.title, entities_str, offsets_str])
         return output.getvalue().strip()
 
 class KASMemmapMetadata(NamedTuple):
@@ -60,6 +64,7 @@ class KASMemmapMetadata(NamedTuple):
     loc: int
     title: str
     entities: List[Dict]
+    offsets: List[Tuple[int, int]]
 
 class TokenizerOutput(NamedTuple):
     id: str

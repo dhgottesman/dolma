@@ -17,14 +17,13 @@ TaggerOutputType: TypeAlias = List[TaggerOutputValueType]
 TaggerOutputDictType: TypeAlias = Dict[str, TaggerOutputType]
 
 class KASInputSpec(Struct):
-    id: int                               # Page ID
-    title: str                            # Page title
-    text: str = ""                        # Cleaned article text
-    sections: List[Dict] = field(default_factory=list)  # List of section dictionaries
-    entities: List[Dict] = field(default_factory=list)  # List of entity dictionaries (can be None)
-    namespace: str = ""                   # Namespace for non-article pages (disambiguation, etc.)
-    start_time: float = 0.0               # Timestamp when processing started
-    error: str = ""                       # Error message if an error occurred
+    id: str                                                     # Page ID
+    title: str                                                  # Page title
+    text: str = ""                                              # Cleaned article text
+    url: str = ""                                               # URL of the article
+    hyperlinks: List[Dict] = field(default_factory=list)        # List of hyperlinks (from Refined)
+    coref: Dict[str, List] = field(default_factory=dict)             # Coreference clusters (from Refined)
+    entity_linking: List[Dict] = field(default_factory=list)    # Entity linking mentions (from Maverick)
 
 class InputSpec(Struct):
     id: str

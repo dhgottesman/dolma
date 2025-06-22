@@ -1,9 +1,11 @@
 # List of document paths to process
 documents: 
-  - /home/morg/dataset/parsed_enwiki_simple/*.gz
+  - /home/morg/dataset/maverick/maverick_*.json
 
 # Destination path to save the outputs
-destination: wikipedia_vsl
+destination: final_tokenizations_with_offsets/no_special
+
+max_size: 10737418240
 
 dtype: uint32
 

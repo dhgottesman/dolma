@@ -47,20 +47,18 @@ def tokenize_file(
     Yields:
         TokenizerOutput: The tokenized output.
     """
-    if "enwiki" in path:
-        yield from kas_tokenize_file(
-            tokenizer_name_or_path=tokenizer_name_or_path,
-            path=path,
-            refresh_tokenizer_every=refresh_tokenizer_every,
-            **tokenizer_kwargs,
-        )
-    else:
-        yield from original_tokenize_file(
-            tokenizer_name_or_path=tokenizer_name_or_path,
-            path=path,
-            refresh_tokenizer_every=refresh_tokenizer_every,
-            **tokenizer_kwargs,
-        )
+    yield from kas_tokenize_file(
+        tokenizer_name_or_path=tokenizer_name_or_path,
+        path=path,
+        refresh_tokenizer_every=refresh_tokenizer_every,
+        **tokenizer_kwargs,
+    )
+    #     yield from original_tokenize_file(
+    #         tokenizer_name_or_path=tokenizer_name_or_path,
+    #         path=path,
+    #         refresh_tokenizer_every=refresh_tokenizer_every,
+    #         **tokenizer_kwargs,
+    #     )
 
 class MemMapParallelWriter(BaseParallelProcessor):
     @classmethod
