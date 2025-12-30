@@ -12,8 +12,8 @@ import msgspec
 import numpy as np
 import smart_open
 
-import spacy
-nlp = spacy.load("en_core_web_sm")  # Load English model
+# import spacy
+# nlp = spacy.load("en_core_web_sm")  # Load English model
 
 
 ARTICLE_NAMESPACE = "Article"
