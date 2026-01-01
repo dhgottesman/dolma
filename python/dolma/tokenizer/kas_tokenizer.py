@@ -12,9 +12,6 @@ import msgspec
 import numpy as np
 import smart_open
 
-# import spacy
-# nlp = spacy.load("en_core_web_sm")  # Load English model
-
 
 ARTICLE_NAMESPACE = "Article"
 
@@ -45,43 +42,6 @@ def make_tokenizer(
         else KASTokenizer.from_pretrained(tokenizer_name_or_path, **tokenizer_kwargs)
     )
     return tokenizer
-
-def merge_entities(hyperlinks, coref, entity_linking):
-    entities = []
-
-    # Process hyperlinks
-    for link in hyperlinks:
-        entities.append({
-            "char_start": link["start"],
-            "char_end": link["end"],
-            "text": link["surface_form"],
-            "name": link["uri"].replace('_', ' '),
-            "qcode": link.get("qcode", ""),
-            "source": "hyperlink"
-        })
-
-    # Process coreference clusters
-    for i, (cluster_texts, cluster_offsets) in enumerate(zip(coref["clusters_char_text"], coref["clusters_char_offsets"])):
-        for text, (start, end) in zip(cluster_texts, cluster_offsets):
-            entities.append({
-                "char_start": start,
-                "char_end": end,
-                "text": text,
-                "cluster_id": i,
-                "source": "coreference"
-            })
-
-    # Process entity linking
-    for link in entity_linking:
-        link["char_start"] = link.pop("start")
-        link["char_end"] = link["char_start"] + link.pop("ln")
-        link["source"] = "entity_linking"
-        entities.append(link)
-
-    # Sort by start, then by end (shorter span first if starts are equal)
-    entities.sort(key=lambda x: (x["char_start"], x["char_end"]))
-
-    return entities
 
 def add_token_indices(
     tokens: List[int],
@@ -143,9 +103,7 @@ def tokenize_file(
                     row = decoder.decode(line)
 
                     if text := row.text.strip(): # Skip empty docs
-                        # Union all entities
-                        entities = merge_entities(row.hyperlinks, row.coref, row.entity_linking)
-
+                        entities = row["entities"]
                         tokens, offsets = tokenizer.encode(text, add_special_tokens=True) # Daniela, should change to False
                         entities = add_token_indices(tokens, offsets, entities, tokenizer)
                         
